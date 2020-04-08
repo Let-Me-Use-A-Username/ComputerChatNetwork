@@ -27,8 +27,10 @@ public class Server implements Runnable{
     private void accept(){
         System.out.println("Server running at: "+serverInfo.toString());
         try{
-            Socket socket = serverSocket.accept();
-            new Thread(new ServerHandler(socket)).start();
+            while(true) {
+                Socket socket = serverSocket.accept();
+                new Thread(new ServerHandler(socket)).start();
+            }
         }catch(IOException e){
             System.out.println("Server closed");
         }
