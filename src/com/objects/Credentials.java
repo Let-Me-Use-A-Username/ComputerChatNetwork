@@ -1,6 +1,8 @@
 package com.objects;
 
-public class Credentials {
+import java.io.Serializable;
+
+public class Credentials implements Serializable {
 
     private String clientID;
     private String password;

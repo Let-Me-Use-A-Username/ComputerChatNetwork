@@ -1,10 +1,12 @@
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class Server implements Runnable{
 
     private static final NodeReader reader = new NodeReader();
+    public final ConcurrentHashMap<String, String> sessions;
     private ServerSocket serverSocket;
     private ServerInfo serverInfo;
     private String configPath;
@@ -13,6 +15,7 @@ public class Server implements Runnable{
     public Server(String configPath){
         this.configPath = configPath;
         serverInfo = reader.readServerInfo(configPath);
+        sessions = new ConcurrentHashMap<>();
     }
 
     public void run(){
@@ -29,7 +32,7 @@ public class Server implements Runnable{
         try{
             while(true) {
                 Socket socket = serverSocket.accept();
-                new Thread(new ServerHandler(socket)).start();
+                new Thread(new ServerHandler(socket, this)).start();
             }
         }catch(IOException e){
             System.out.println("Server closed");

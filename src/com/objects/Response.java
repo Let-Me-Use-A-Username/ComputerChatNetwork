@@ -1,17 +1,28 @@
 package com.objects;
 
-public class Response {
+import java.io.Serializable;
+
+public class Response implements Serializable {
 
     private String tag;
     private ResponseType response;
     private String bodyType;
     private Object body;
+    private Session session;
 
     public Response(String tag, ResponseType response, String bodyType, Object body) {
         this.tag = tag;
         this.response = response;
         this.bodyType = bodyType;
         this.body = body;
+    }
+
+    public Response(String tag, ResponseType response, String bodyType, Object body, Session session) {
+        this.tag = tag;
+        this.response = response;
+        this.bodyType = bodyType;
+        this.body = body;
+        this.session = session;
     }
 
     public String getTag() {
@@ -45,4 +56,9 @@ public class Response {
     public void setBody(Object body) {
         this.body = body;
     }
+
+    public Session getSession() { return session; }
+
+    public void setSession(Session session) { this.session = session; }
+
 }

@@ -1,3 +1,6 @@
 .idea/*
 out/*
 *.iml
+database/ClientCredentials/*
+database/Profile/*
+database/Client/*

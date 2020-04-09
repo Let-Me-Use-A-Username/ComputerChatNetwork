@@ -1,6 +1,8 @@
 package com.objects;
 
-public class Session {
+import java.io.Serializable;
+
+public class Session implements Serializable {
 
     private final String hash;
 
