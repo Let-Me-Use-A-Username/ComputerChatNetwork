@@ -4,5 +4,6 @@ public enum ResponseType {
     NOT_FOUND,
     OK,
     BAD_REQUEST,
-    CREATED
+    CREATED,
+    UNAUTHORIZED
 }

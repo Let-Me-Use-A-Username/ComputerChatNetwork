@@ -27,20 +27,38 @@ public class ServerHandler implements Runnable{
         try {
             out = new ObjectOutputStream(socket.getOutputStream());
             in = new ObjectInputStream(socket.getInputStream());
-            while (true) {
-                Request req = (Request) in.readObject();
-                switch (req.getRequest()){
-                    case REGISTER:
-                        register(req);
-                        break;
-                    case LOG_IN:
-                        logIn(req);
-                        break;
-                    case REQUEST:
-                        break;
-                    default:
-                        break;
-                }
+            Request req = (Request) in.readObject();
+            switch (req.getRequest()){
+                case REGISTER:
+                    register(req);
+                    break;
+                case LOG_IN:
+                    logIn(req);
+                    break;
+                    //TODO: post(5)
+                case POST:
+                    break;
+                    //TODO: follow (2)
+                case FOLLOW:
+                    break;
+                    //TODO: unfollow (3)
+                case UNFOLLOW:
+                    break;
+                    //TODO: getall function (1)
+                case GETALL:
+                    break;
+                case SEARCH:
+                    break;
+                case GETFEED:
+                    break;
+                case GET_USER_FEED:
+                    break;
+                    //TODO: check requests (4)
+                case CHECK_REQUESTS:
+                    break;
+                    //TODO: no such call (0)
+                default:
+                    break;
             }
         }catch(EOFException ignore){
             System.out.println("Client "+node.toString()+" closed connection.");
@@ -90,7 +108,7 @@ public class ServerHandler implements Runnable{
             return;
         }
         if(cred.getPassword().equals(userCred.getPassword())){
-            Session session = new Session(hash(cred.getPassword()));
+            Session session = new Session(hash(cred.getPassword()), cred.getClientID());
             server.sessions.put(cred.getClientID(), session.getHash());
             res = new Response(TagTypes.SERVER,ResponseType.OK, BodyType.OUTPUT,
                     welcome+cred.getClientID(), session);
