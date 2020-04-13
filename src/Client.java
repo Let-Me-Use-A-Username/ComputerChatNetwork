@@ -4,7 +4,7 @@ import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.net.Socket;
-import java.util.Scanner;
+import java.util.*;
 
 public class Client implements  Runnable{
 
@@ -24,6 +24,7 @@ public class Client implements  Runnable{
     }
 
     private void printMenu(){
+        System.out.println("\n\n***********************************************");
         System.out.println("1. Register");
         System.out.println("2. Log in");
         System.out.println("3. Search photograph");
@@ -183,9 +184,17 @@ public class Client implements  Runnable{
         Request request = new Request(TagTypes.CLIENT,session, RequestType.CHECK_REQUESTS, "", "");
         Response response = sendRequest(request);
         if(response==null) return;
-        //while(session!=null){
-
-        //}
+        if(response.getBodyType().equals(BodyType.OUTPUT)){
+            output((String)response.getBody());
+            return;
+        }
+        Map<String, String> request_map = (Map<String, String>) response.getBody();
+        request_map.forEach((k, v)->{
+            String[] parts = v.split("\\s");
+            String follow = parts[1].equals("null")? "" : parts[1];
+            String directory = parts[2].equals("null")? "" : parts[2];
+            System.out.println(k+ " requested :"+follow+" "+directory);
+        });
         return;
     }
 
@@ -245,6 +254,7 @@ public class Client implements  Runnable{
             return null;
         }
         if(response.getBodyType().equals(BodyType.OUTPUT)) output((String)response.getBody());
+        if(response.getBodyType().equals(BodyType.STRING_SET)) outputSet((Set<String>) response.getBody());
         disconnect(socket);
         return response;
     }
@@ -269,6 +279,11 @@ public class Client implements  Runnable{
 
     private void output(String message){
         System.out.println(message);
+    }
+
+    private void outputSet(Set<String> set){
+        Iterator it = set.iterator();
+        while (it.hasNext()) System.out.println("- "+it.next());
     }
 
     private static final String cnf = "./serverConfig.txt";

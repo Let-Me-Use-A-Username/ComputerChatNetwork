@@ -4,8 +4,14 @@ import com.objects.*;
 import java.io.*;
 import java.math.BigInteger;
 import java.net.Socket;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 public class ServerHandler implements Runnable{
 
@@ -15,6 +21,7 @@ public class ServerHandler implements Runnable{
     private ObjectInputStream in;
     private final ClientNode node;
     private final Object credLock = new Object();
+    private final Object clientLock = new Object();
     private final Server server;
 
     public ServerHandler(Socket socket, Server server){
@@ -37,27 +44,36 @@ public class ServerHandler implements Runnable{
                     break;
                     //TODO: post(5)
                 case POST:
+                    post(req);
                     break;
-                    //TODO: follow (2)
                 case FOLLOW:
+                    follow(req);
                     break;
                     //TODO: unfollow (3)
                 case UNFOLLOW:
+                    unfollow(req);
                     break;
-                    //TODO: getall function (1)
                 case GETALL:
+                    getAll(req);
                     break;
                 case SEARCH:
+                    search(req);
                     break;
                 case GETFEED:
+                    getFeed(req);
                     break;
                 case GET_USER_FEED:
+                    getUserFeed(req);
                     break;
                     //TODO: check requests (4)
                 case CHECK_REQUESTS:
+                    checkRequest(req);
                     break;
-                    //TODO: no such call (0)
+                case ACCEPT_DENY:
+                    accept_deny(req);
+                    break;
                 default:
+                    noQuery();
                     break;
             }
         }catch(EOFException ignore){
@@ -165,27 +181,13 @@ public class ServerHandler implements Runnable{
         if(exists){
             out.writeObject(new Response(TagTypes.SERVER, ResponseType.BAD_REQUEST, BodyType.OUTPUT, userExists));
             out.flush();
-            log("User existed");
             return;
         }
-        log("User didn't exist");
         write_register(credentials);
         out.writeObject(new Response(TagTypes.SERVER, ResponseType.CREATED,BodyType.OUTPUT,
                 "User "+credentials.getClientID()+" created"));
         out.flush();
     }
-
-//    try{
-//        Files.createDirectory(Paths.get("brokerFiles/"+serverInfo.getAddress()+"_"+serverInfo.getPort()));
-//    }catch(FileAlreadyExistsException ignored) {}
-//
-//    File temp = new File("brokerFiles/" + serverInfo.getAddress() + "_" + serverInfo.getPort() + "/" + artistSong + ".mp3");
-//
-//    OutputStream os = new FileOutputStream(temp, true);
-//
-//        for (MusicValue songFile : songFiles) os.write(songFile.getChunk());
-//
-//        os.close();
 
     private final String credPath = "./database/ClientCredentials/index.txt";
     private boolean userExists(String clientID, Credentials credentials){
@@ -258,6 +260,260 @@ public class ServerHandler implements Runnable{
         }catch(NoSuchAlgorithmException e){
             return null;
         }
+    }
+
+    Response bad_req = new Response(TagTypes.SERVER, ResponseType.BAD_REQUEST, BodyType.OUTPUT, "Bad Request: session");
+
+    //TODO: post(5)
+    private void post(Request request) throws IOException{
+        if(!authenticate(request.getCookie())){
+            out.writeObject(bad_req);
+            out.flush();
+            return;
+        }
+    }
+
+    private void follow(Request request) throws IOException{
+        if(!authenticate(request.getCookie())){
+            out.writeObject(bad_req);
+            out.flush();
+            return;
+        }
+        String follower = request.getCookie().getClientID();
+        String toFollow = (String) request.getBody();
+        if(!userExists(toFollow, null)){
+            out.writeObject(new Response(TagTypes.SERVER,ResponseType.NOT_FOUND, BodyType.OUTPUT, user_404));
+            out.flush();
+            return;
+        }
+        //TODO: Check if user is blocked
+        if(writeRequest(follower, toFollow, RequestType.FOLLOW)){
+            out.writeObject(new Response(TagTypes.SERVER, ResponseType.CREATED, BodyType.OUTPUT, "Request sent!"));
+        }else{
+            out.writeObject(new Response(TagTypes.SERVER, ResponseType.INTERNAL_ERROR, BodyType.OUTPUT, "Failed to sent request!"));
+        }
+        out.flush();
+    }
+
+    //TODO: unfollow (3)
+    private void unfollow(Request request) throws IOException{
+        if(!authenticate(request.getCookie())){
+            out.writeObject(bad_req);
+            out.flush();
+            return;
+        }
+    }
+
+    private void getAll(Request request) throws IOException{
+        if(!authenticate(request.getCookie())){
+            out.writeObject(bad_req);
+            out.flush();
+            return;
+        }
+        HashSet<String> users = readAllUsers();
+        Response res = new Response(TagTypes.SERVER,ResponseType.OK, BodyType.STRING_SET, users);
+        out.writeObject(res);
+        out.flush();
+    }
+
+    private void search(Request request) throws IOException{
+        if(!authenticate(request.getCookie())){
+            out.writeObject(bad_req);
+            out.flush();
+            return;
+        }
+    }
+
+    private void getFeed(Request request) throws IOException{
+        if(!authenticate(request.getCookie())){
+            out.writeObject(bad_req);
+            out.flush();
+            return;
+        }
+    }
+
+    private void getUserFeed(Request request) throws IOException{
+        if(!authenticate(request.getCookie())){
+            out.writeObject(bad_req);
+            out.flush();
+            return;
+        }
+    }
+
+    //TODO: check requests (4)
+    private void checkRequest(Request request) throws IOException {
+        if(!authenticate(request.getCookie())){
+            out.writeObject(bad_req);
+            out.flush();
+            return;
+        }
+        LinkedHashMap<String, String> client_requests = getRequests(request.getCookie().getClientID());
+        // No requests
+        if(client_requests==null){
+            out.writeObject(new Response(TagTypes.SERVER,ResponseType.OK, BodyType.OUTPUT, "No requests."));
+            out.flush();
+            return;
+        }
+        out.writeObject(new Response(TagTypes.SERVER, ResponseType.OK, BodyType.MAP_STRING_STRING, (Map<String, String>) client_requests));
+        out.flush();
+    }
+
+    //FORMAT: "NAME" follow:"(y|yes)", "(n|no)" or null directory:"(y|yes)", "(n|no)" or null
+
+    private void accept_deny(Request request) throws IOException{
+        if(!authenticate(request.getCookie())){
+            out.writeObject(bad_req);
+            out.flush();
+            return;
+        }
+        String getLine = (String) request.getBody();
+        String[] parts = getLine.split("\\s");
+        String client = parts[0];
+        int follow = parse_option(parts[1]);
+        int directory = parse_option(parts[2]);
+    }
+
+    private static final Response noQueryRes =
+            new Response(TagTypes.SERVER, ResponseType.BAD_REQUEST, BodyType.OUTPUT, "Bad request: No such request.");
+
+    private void noQuery() throws IOException {
+        out.writeObject(noQueryRes);
+        out.flush();
+    }
+
+
+    private boolean authenticate(Session session){
+        if(session == null) return false;
+        if(session.getClientID() == null || session.getHash() == null) return false;
+        String db_hash_session = server.sessions.get(session.getClientID());
+        if(db_hash_session == null) return false;
+        if(!db_hash_session.equals(session.getHash())) return false;
+        return true;
+    }
+
+
+
+    String[] requestPath = new String[]{"./database/Client/", "requests.txt"};
+
+    private boolean writeRequest(String follower, String followee, RequestType req_type){
+
+        String[] parts = new String[]{follower, "null", "null"};
+
+        switch (req_type){
+            case FOLLOW:
+                parts[1] = "follow";
+                break;
+            case DIRECTORY:
+                parts[2] = "directory";
+                break;
+            default:
+                break;
+        }
+
+        try{
+            String path = requestPath[0]+"/"+followee+"/"+requestPath[1];
+            createPath(Paths.get(path));
+            File file = new File(path);
+            FileReader fr = new FileReader(file);
+            BufferedReader br = new BufferedReader(fr);
+            Map<String, String> fileMap = new LinkedHashMap<>();
+            String readline;
+            while((readline = br.readLine()) != null){
+                String client_id = readline.split("\\s")[0];
+                fileMap.put(client_id, readline);
+            }
+            br.close();
+            fr.close();
+            String update = fileMap.get(follower);
+            if(update!=null){
+                String[] row = update.split("\\s");
+                if(req_type == RequestType.FOLLOW){
+                    parts[2] = row[2];
+                }else{
+                    parts[1] = row[1];
+                }
+            }
+            String newRow = String.join(" ", parts);
+            fileMap.put(follower, newRow);
+            //Create new file
+            FileWriter fw = new FileWriter(file);
+            BufferedWriter bw = new BufferedWriter(fw);
+            PrintWriter pw = new PrintWriter(bw);
+            //lock Client folder to write
+            synchronized (clientLock){
+                fileMap.forEach((k, v)->{
+                    pw.println(v);
+                    pw.flush();
+                });
+            }
+            //Close streams
+            pw.close();
+            bw.close();
+            fw.close();
+        }catch(IOException e){
+            e.printStackTrace();
+        }
+        return true;
+    }
+
+    private LinkedHashMap<String, String> getRequests(String client_id){
+        LinkedHashMap<String, String> req_map = new LinkedHashMap<>();
+        try{
+            File file = new File(requestPath[0]+client_id+"/"+requestPath[1]);
+            if(!file.exists()) return null;
+            FileReader fr = new FileReader(file);
+            BufferedReader br = new BufferedReader(fr);
+            String readline;
+            synchronized (clientLock){
+                while((readline = br.readLine()) != null){
+                    String client = readline.split("\\s")[0];
+                    req_map.put(client, readline);
+                }
+            }
+            br.close();
+            fr.close();
+        }catch (IOException e){}
+        if(req_map.size() == 0 ) return null;
+        return req_map;
+    }
+
+    private HashSet<String> readAllUsers(){
+        HashSet<String> userSet = new HashSet<>();
+        try{
+            File file = new File(credPath);
+            if(!file.exists()) return userSet;
+            FileReader fr = new FileReader(file.getPath());
+            BufferedReader br = new BufferedReader(fr);
+            String readline;
+            synchronized (credLock){
+                while((readline = br.readLine()) != null){
+                    String client_id = readline.split("\\s+")[0];
+                    userSet.add(client_id);
+                }
+            }
+            br.close();
+            fr.close();
+        }catch(IOException ignore){}
+        return userSet;
+    }
+
+    private void createPath(Path path){
+        try {
+            if (!Files.exists(path)) {
+                Files.createDirectories(path.getParent());
+                if (!Files.exists(path))
+                    Files.createFile(path);
+                Files.write(path, ("").getBytes());
+            }
+        }catch (IOException ignore){}
+    }
+
+    private int parse_option(String option){
+        if(option.equals("null")) return -1;
+        option = option.toLowerCase().substring(0, 1);
+        if(option.equals("y")) return 0;
+        if(option.equals("n")) return 1;
+        return -1;
     }
 
 }

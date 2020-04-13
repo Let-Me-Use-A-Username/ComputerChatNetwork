@@ -6,11 +6,13 @@ public enum RequestType {
     REQUEST,
     CREDENTIALS,
     FOLLOW,
+    DIRECTORY,
     UNFOLLOW,
     GETALL,
     GETFEED,
     GET_USER_FEED,
     CHECK_REQUESTS,
     POST,
-    SEARCH
+    SEARCH,
+    ACCEPT_DENY
 }

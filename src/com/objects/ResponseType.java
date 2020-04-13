@@ -5,5 +5,6 @@ public enum ResponseType {
     OK,
     BAD_REQUEST,
     CREATED,
-    UNAUTHORIZED
+    UNAUTHORIZED,
+    INTERNAL_ERROR
 }
