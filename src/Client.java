@@ -185,17 +185,58 @@ public class Client implements  Runnable{
         Response response = sendRequest(request);
         if(response==null) return;
         if(response.getBodyType().equals(BodyType.OUTPUT)){
-            output((String)response.getBody());
             return;
         }
         Map<String, String> request_map = (Map<String, String>) response.getBody();
-        request_map.forEach((k, v)->{
+        printReqMap(request_map);
+        while (true){
+            System.out.println("\nEnter a name to get more options, map to reprint all names or e to exit");
+            String name = scanner.nextLine();
+            if(name.toLowerCase().equals("e")) break;
+            if(name.toLowerCase().equals("map")) {
+                printReqMap(request_map);
+                continue;
+            }
+            if(request_map.get(name) != null){
+                String[] parts = request_map.get(name).split("\\s");
+                if(parts[1].equals("follow")){
+                    System.out.println("Do you want to allow "+name+" to follow you?");
+                    System.out.println("Enter yes(y) to accept,f to follow back, no(n) to deny him, blank(or null) to ignore or block(b) to block user");
+                    String input = scanner.nextLine();
+                    String index = input.toLowerCase().substring(0, 1);
+                    if(index.equals("y") || index.equals("f")){
+                        if(parts[2].equals("directory")){
+                            System.out.println("Do you want to allow "+name+" to also access your directory?");
+                            System.out.println("Enter yes(y) to accept, no(n) to deny him, blank(or null) to ignore or block(b) to block user");
+                            String input2 = scanner.nextLine();
+                            String index2 = input2.toLowerCase().substring(0, 1);
+                            request = new Request(TagTypes.CLIENT, session, RequestType.ACCEPT_DENY, "",name+" "+index+" "+index2);
+                        }else {
+                            request = new Request(TagTypes.CLIENT, session, RequestType.ACCEPT_DENY, "", name + " " + input);
+                        }
+                        sendRequest(request);
+                    }else if(index.equals("n") || index.equals("b")){
+                        request = new Request(TagTypes.CLIENT, session, RequestType.ACCEPT_DENY, "",name+" "+input);
+                        sendRequest(request);
+                    }
+                }
+                //add later
+                if (parts[1].equals("null") && parts[2].equals("directory")){
+
+                }
+            }else{
+                System.out.println("Name doesn't exist in the current requests");
+            }
+        }
+    }
+
+    private void printReqMap(Map<String, String> map){
+        map.forEach((k, v)->{
             String[] parts = v.split("\\s");
             String follow = parts[1].equals("null")? "" : parts[1];
             String directory = parts[2].equals("null")? "" : parts[2];
             System.out.println(k+ " requested :"+follow+" "+directory);
         });
-        return;
     }
 
     int refreshFeed = -1;

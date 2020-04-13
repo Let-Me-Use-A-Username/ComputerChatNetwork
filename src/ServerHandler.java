@@ -9,9 +9,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.HashSet;
-import java.util.LinkedHashMap;
-import java.util.Map;
+import java.util.*;
 
 public class ServerHandler implements Runnable{
 
@@ -22,6 +20,7 @@ public class ServerHandler implements Runnable{
     private final ClientNode node;
     private final Object credLock = new Object();
     private final Object clientLock = new Object();
+    private final Object graph_lock = new Object();      
     private final Server server;
 
     public ServerHandler(Socket socket, Server server){
@@ -70,7 +69,7 @@ public class ServerHandler implements Runnable{
                     checkRequest(req);
                     break;
                 case ACCEPT_DENY:
-                    accept_deny(req);
+                    accept_deny_block(req);
                     break;
                 default:
                     noQuery();
@@ -91,10 +90,6 @@ public class ServerHandler implements Runnable{
         }
     }
 
-    private void checkFirstInput() throws IOException{
-
-    }
-
     /*
      *
      * Log in methods
@@ -106,8 +101,8 @@ public class ServerHandler implements Runnable{
     private static final String bad_cred = "Wrong credentials for client ";
 
     private void logIn(Request request) throws IOException {
-        Response res = null;
-        Credentials cred = null;
+        Response res;
+        Credentials cred;
         Credentials userCred = new Credentials("", "");
         if(!request.getBodyType().equals(BodyType.CREDENTIAL)){
             bad_credentials();
@@ -158,15 +153,10 @@ public class ServerHandler implements Runnable{
      *
      */
 
-    private static final String registerOut = "Please give me your credentials, to register";
     private static final String userExists = "Client id already exists.";
 
-    private void log(String msg){
-        System.out.println(msg);
-    }
-
     private void register(Request request) throws IOException {
-        Credentials credentials = null;
+        Credentials credentials;
         if(!request.getBodyType().equals(BodyType.CREDENTIAL)){
             bad_credentials();
             return;
@@ -193,12 +183,9 @@ public class ServerHandler implements Runnable{
     private boolean userExists(String clientID, Credentials credentials){
         boolean found = false;
         try{
+            createPath(Paths.get(credPath));
             File credIndex = new File(credPath);
-            // Check if file exists
-            if(!credIndex.exists()){
-                credIndex.createNewFile();
-                return false;
-            }
+
             // Check all records
             FileReader fr = new FileReader(credIndex.getPath());
             BufferedReader br = new BufferedReader(fr);
@@ -227,8 +214,8 @@ public class ServerHandler implements Runnable{
         return found;
     }
 
-    private boolean write_register(Credentials credentials){
-        boolean wroteOnFile = false;
+    private void write_register(Credentials credentials){
+
         try{
             FileWriter fw = new FileWriter(credPath,true);
             BufferedWriter br = new BufferedWriter(fw);
@@ -237,7 +224,6 @@ public class ServerHandler implements Runnable{
                 pw.println(credentials.getClientID() + " " + credentials.getPassword());
                 pw.flush();
             }
-            wroteOnFile = true;
             //close streams
             pw.close();
             br.close();
@@ -245,7 +231,7 @@ public class ServerHandler implements Runnable{
         }catch (Exception e){
             System.err.println("Something went wrong creating new record in "+credPath);
         }
-        return wroteOnFile;
+
     }
 
     private String hash(String password){
@@ -271,6 +257,7 @@ public class ServerHandler implements Runnable{
             out.flush();
             return;
         }
+        System.out.println("aha");
     }
 
     private void follow(Request request) throws IOException{
@@ -302,6 +289,7 @@ public class ServerHandler implements Runnable{
             out.flush();
             return;
         }
+        System.out.println("aha");
     }
 
     private void getAll(Request request) throws IOException{
@@ -322,6 +310,7 @@ public class ServerHandler implements Runnable{
             out.flush();
             return;
         }
+        System.out.println("aha");
     }
 
     private void getFeed(Request request) throws IOException{
@@ -330,6 +319,7 @@ public class ServerHandler implements Runnable{
             out.flush();
             return;
         }
+        System.out.println("aha");
     }
 
     private void getUserFeed(Request request) throws IOException{
@@ -338,6 +328,7 @@ public class ServerHandler implements Runnable{
             out.flush();
             return;
         }
+        System.out.println("aha");
     }
 
     //TODO: check requests (4)
@@ -354,13 +345,12 @@ public class ServerHandler implements Runnable{
             out.flush();
             return;
         }
-        out.writeObject(new Response(TagTypes.SERVER, ResponseType.OK, BodyType.MAP_STRING_STRING, (Map<String, String>) client_requests));
+        out.writeObject(new Response(TagTypes.SERVER, ResponseType.OK, BodyType.MAP_STRING_STRING, client_requests));
         out.flush();
     }
 
-    //FORMAT: "NAME" follow:"(y|yes)", "(n|no)" or null directory:"(y|yes)", "(n|no)" or null
-
-    private void accept_deny(Request request) throws IOException{
+    //FORMAT: "NAME" follow:"(y|yes)", "(n|no)",null,(block|b) directory:"(y|yes)", "(n|no)", null, (block|b)
+    private void accept_deny_block(Request request) throws IOException{
         if(!authenticate(request.getCookie())){
             out.writeObject(bad_req);
             out.flush();
@@ -369,8 +359,179 @@ public class ServerHandler implements Runnable{
         String getLine = (String) request.getBody();
         String[] parts = getLine.split("\\s");
         String client = parts[0];
+        String sender = request.getCookie().getClientID();
         int follow = parse_option(parts[1]);
-        int directory = parse_option(parts[2]);
+        boolean fol_result = switchRequest(sender, client, follow, RequestType.FOLLOW);
+        int directory = -1;
+        boolean dir_request = false;
+        if(follow != 2 && parts.length == 3){
+            directory = parse_option(parts[2]);
+            dir_request = switchRequest(sender, client, directory, RequestType.DIRECTORY);
+        }
+        String result = fol_result ? req_format(follow, " following ",client," from "):
+                "Follow query failed";
+        if(parts.length == 3){
+            result += (dir_request) ? req_format(directory, " directory access ",client,"to"):
+                "Directory query failed";
+        }
+        out.writeObject(new Response(TagTypes.SERVER, (result.equals("")? ResponseType.INTERNAL_ERROR: ResponseType.OK),
+                BodyType.OUTPUT, result));
+        out.flush();
+    }
+
+    private String req_format(int choice, String request, String client, String adj){
+        switch (choice){
+            case 0:
+                return "Accepted " + request + adj +client;
+            case 1:
+                return "Refused " + request + adj + client;
+            case 2:
+                return "Blocked from " + request + client;
+            case 10:
+                return "Accepted and followed back " + adj + client;
+            default:
+                return "";
+        }
+    }
+
+    private boolean switchRequest(String client, String requester, int choice, RequestType req){
+        switch (choice){
+            case 0: //accept
+            case 10:
+                return acceptRequest(client, requester, req, choice);
+            case 1: //deny
+                return denyRequest(client, requester);
+            case 2:
+                return block(client, requester, req);
+            default:
+                return true;
+        }
+    }
+
+    private boolean denyRequest(String client,String requester){
+        try{
+            String path = requestPath[0]+"/"+client+"/"+requestPath[1];
+            createPath(Paths.get(path));
+            File file = new File(path);
+            // Read requests
+            FileReader fr = new FileReader(file);
+            BufferedReader br = new BufferedReader(fr);
+            LinkedHashMap<String, String> request_names = new LinkedHashMap<>();
+            String readline;
+            while((readline = br.readLine()) != null) {
+                String client_id = readline.split("\\s")[0];
+                request_names.put(client_id, readline);
+            }
+            // Close read stream
+            br.close();
+            fr.close();
+            // Edit file or remove row if everything is null
+            if(request_names.get(requester) !=null){
+                new Thread(new Notification(client, requester, "denied your following")).start();
+                request_names.remove(requester);
+            }
+            // Write the new map
+            FileWriter fw = new FileWriter(file);
+            BufferedWriter bw = new BufferedWriter(fw);
+            PrintWriter pw = new PrintWriter(bw);
+            request_names.forEach( (k, v)->{
+                pw.println(v);
+                pw.flush();
+            });
+            // Close write stream
+            pw.close();
+            bw.close();
+            fw.close();
+        }catch (IOException e){ return false;}
+        return true;
+    }
+
+    private boolean acceptRequest(String client,String requester,RequestType req, int choice){
+        try{
+            String path = requestPath[0]+"/"+client+"/"+requestPath[1];
+            createPath(Paths.get(path));
+            File file = new File(path);
+            // Read requests
+            FileReader fr = new FileReader(file);
+            BufferedReader br = new BufferedReader(fr);
+            LinkedHashMap<String, String> request_names = new LinkedHashMap<>();
+            String readLine;
+            while((readLine = br.readLine()) != null) {
+                String client_id = readLine.split("\\s")[0];
+                request_names.put(client_id, readLine);
+            }
+            // Close read stream
+            br.close();
+            fr.close();
+            // Edit file or remove row if everything is null
+            if(request_names.get(requester) !=null){
+                if(req == RequestType.FOLLOW){
+                    new Thread(new GraphHandler(client, requester, "add")).start();
+                    if(choice == 10){
+                        new Thread(new Notification(client, requester, "accepted your following and followed back")).start();
+                        new Thread(new GraphHandler(requester, client, "add")).start();
+                    }else{
+                        new Thread(new Notification(client, requester, "accepted your following")).start();
+                    }
+                }else if(req == RequestType.DIRECTORY){
+                    new Thread(new Notification(client, requester, "allowed you to access the directory.")).start();
+                    addToDirectoryRules(client, requester);
+                }
+                String[] parts = request_names.get(requester).split("\\s");
+                parts[1] = req == RequestType.FOLLOW? "null": parts[1];
+                parts[2] = req == RequestType.DIRECTORY? "null": parts[2];
+                if(parts[1].equals(parts[2]) && parts[1].equals("null")){
+                    request_names.remove(requester);
+                }else{
+                    request_names.put(requester, String.join(" ", parts));
+                }
+            }
+            // Write the new map
+            FileWriter fw = new FileWriter(file);
+            BufferedWriter bw = new BufferedWriter(fw);
+            PrintWriter pw = new PrintWriter(bw);
+            request_names.forEach( (k, v)->{
+                pw.println(v);
+                pw.flush();
+            });
+            // Close write stream
+            pw.close();
+            bw.close();
+            fw.close();
+        }catch (IOException e){ return false;}
+        return true;
+    }
+
+    private boolean block(String client,String requester,RequestType req){
+        try{
+            String path = requestPath[0]+"/"+client+"/"+requestPath[2];
+            createPath(Paths.get(path));
+            File file = new File(path);
+            // Read blocked names
+            FileReader fr = new FileReader(file);
+            BufferedReader br = new BufferedReader(fr);
+            LinkedHashSet<String> blocked_names = new LinkedHashSet<>();
+            String readline;
+            while((readline = br.readLine()) != null) blocked_names.add(readline);
+            // Close read stream
+            br.close();
+            fr.close();
+            // add new blocked client
+            blocked_names.add(requester);
+            // Write the new set of names
+            FileWriter fw = new FileWriter(file);
+            BufferedWriter bw = new BufferedWriter(fw);
+            PrintWriter pw = new PrintWriter(bw);
+            for (String blocked_name : blocked_names) {
+                pw.println(blocked_name);
+                pw.flush();
+            }
+            // Close write stream
+            pw.close();
+            bw.close();
+            fw.close();
+        }catch (IOException e){ return false;}
+        return true;
     }
 
     private static final Response noQueryRes =
@@ -387,15 +548,12 @@ public class ServerHandler implements Runnable{
         if(session.getClientID() == null || session.getHash() == null) return false;
         String db_hash_session = server.sessions.get(session.getClientID());
         if(db_hash_session == null) return false;
-        if(!db_hash_session.equals(session.getHash())) return false;
-        return true;
+        return db_hash_session.equals(session.getHash());
     }
 
+    String[] requestPath = new String[]{"./database/Client/", "requests.txt", "blocked.txt", "directory.txt"};
 
-
-    String[] requestPath = new String[]{"./database/Client/", "requests.txt"};
-
-    private boolean writeRequest(String follower, String followee, RequestType req_type){
+    private boolean writeRequest(String follower, String followed, RequestType req_type){
 
         String[] parts = new String[]{follower, "null", "null"};
 
@@ -411,7 +569,7 @@ public class ServerHandler implements Runnable{
         }
 
         try{
-            String path = requestPath[0]+"/"+followee+"/"+requestPath[1];
+            String path = requestPath[0]+"/"+followed+"/"+requestPath[1];
             createPath(Paths.get(path));
             File file = new File(path);
             FileReader fr = new FileReader(file);
@@ -472,7 +630,7 @@ public class ServerHandler implements Runnable{
             }
             br.close();
             fr.close();
-        }catch (IOException e){}
+        }catch (IOException ignored){}
         if(req_map.size() == 0 ) return null;
         return req_map;
     }
@@ -513,7 +671,136 @@ public class ServerHandler implements Runnable{
         option = option.toLowerCase().substring(0, 1);
         if(option.equals("y")) return 0;
         if(option.equals("n")) return 1;
+        if(option.equals("b")) return 2;
+        if(option.equals("f")) return 10;
         return -1;
+    }
+
+    public class Notification implements Runnable{
+
+        private final String client;
+        private final String requester;
+        private final String message;
+
+        public Notification(String client, String requester, String message){
+            this.client = client;
+            this.requester = requester;
+            this.message = message;
+        }
+
+        public void run(){
+            String path = requestPath[0]+requester+"/"+"notifications.txt";
+            String notification = client + message;
+            createPath(Paths.get(path));
+            try{
+                File file = new File(path);
+                FileWriter fw = new FileWriter(file);
+                BufferedWriter bw = new BufferedWriter(fw);
+                bw.append(notification);
+                bw.flush();
+                // Close streams
+                bw.close();
+                fw.close();
+            }catch(IOException ignore){ }
+        }
+
+    }
+
+    private boolean addToDirectoryRules(String client,String requester){
+        try{
+            String path = requestPath[0]+"/"+client+"/"+requestPath[3];
+            createPath(Paths.get(path));
+            File file = new File(path);
+            // Read blocked names
+            FileReader fr = new FileReader(file);
+            BufferedReader br = new BufferedReader(fr);
+            LinkedHashSet<String> blocked_names = new LinkedHashSet<>();
+            String readline;
+            while((readline = br.readLine()) != null) blocked_names.add(readline);
+            // Close read stream
+            br.close();
+            fr.close();
+            // add new blocked client
+            blocked_names.add(requester);
+            // Write the new set of names
+            FileWriter fw = new FileWriter(file);
+            BufferedWriter bw = new BufferedWriter(fw);
+            PrintWriter pw = new PrintWriter(bw);
+            for (String blocked_name : blocked_names) {
+                pw.println(blocked_name);
+                pw.flush();
+            }
+            // Close write stream
+            pw.close();
+            bw.close();
+            fw.close();
+        }catch (IOException e){ return false;}
+        return true;
+    }
+
+    class GraphHandler implements Runnable{
+
+        private final String client;
+        private final String follower;
+        private final String add_remove;
+
+        GraphHandler(String client, String follower, String add_remove){
+            this.client = client;
+            this.follower = follower;
+            this.add_remove = add_remove;
+        }
+
+        public void run(){
+            String path = "./database/SocialGraph.txt";
+            createPath(Paths.get(path));
+            try {
+                synchronized (graph_lock){
+                    File file = new File(path);
+                    FileReader fr = new FileReader(file);
+                    BufferedReader br = new BufferedReader(fr);
+                    LinkedHashMap<String, String> rows = new LinkedHashMap<>();
+                    String readline;
+                    // Read file and put every client and their followers to the hash map
+                    while((readline = br.readLine()) != null) {
+                        if(readline.isBlank()) continue;
+                        String client_id = readline.split("\\s")[0];
+                        String remainder = readline.substring((client_id+".").length());
+                        rows.put(client_id, remainder);
+                    }
+                    // User exists in the social graph (he has followers)
+                    if(rows.get(client) != null){
+                        // Get client's row and add the follower in the set
+                        HashSet<String> followers = new HashSet<>(Arrays.asList(rows.get(client).split("\\s")));
+                        if(add_remove.equals("add")) followers.add(follower);
+                        if(add_remove.equals("remove")) followers.remove(follower);
+                        StringBuilder sb = new StringBuilder();
+                        followers.forEach((follower)-> sb.append(follower).append(" "));
+                        rows.put(client, sb.toString());
+                    }
+                    // else put him as new
+                    else{
+                        if(add_remove.equals("remove")) return;
+                        rows.put(client, follower);
+                    }
+                    // Write the new HashMap to the SocialGraph.txt
+                    FileWriter fw = new FileWriter(file);
+                    BufferedWriter bw = new BufferedWriter(fw);
+                    PrintWriter pw = new PrintWriter(bw);
+                    rows.forEach((k, v)->{
+                        pw.println(k+" "+v);
+                        pw.flush();
+                    });
+                    // Close write streams
+                    pw.close();
+                    bw.close();
+                    fw.close();
+                    // Close read streams
+                    br.close();
+                    fr.close();
+                }
+            }catch (IOException ignored){ ignored.printStackTrace();}
+        }
+
     }
 
 }
