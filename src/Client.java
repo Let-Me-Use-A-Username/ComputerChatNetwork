@@ -1,8 +1,6 @@
 import com.objects.*;
 
-import java.io.IOException;
-import java.io.ObjectInputStream;
-import java.io.ObjectOutputStream;
+import java.io.*;
 import java.net.Socket;
 import java.util.*;
 
@@ -35,6 +33,7 @@ public class Client implements  Runnable{
         System.out.println("8. Accept/Deny follow request (if any)");
         System.out.println("9. Refresh");
         System.out.println("10. Check client activity");
+        System.out.println("11. List of people I follow");
         System.out.println("0. Exit");
     }
 
@@ -99,6 +98,9 @@ public class Client implements  Runnable{
                     case 10:
                         checkClient();
                         break;
+                    case 11:
+                        follow_list();
+                        break;
                     default:
                         break;
                 }
@@ -148,8 +150,57 @@ public class Client implements  Runnable{
     }
 
     //Post photo
-    private void post() {
+    private void post() throws IOException, ClassNotFoundException {
         resetFeedIndex();
+        while (true){
+            System.out.println("Post your image(img) or text or e to exit: ");
+            String cancer_choice = scanner.nextLine();
+            if(cancer_choice.equals("e")) break;
+            if(cancer_choice.equals("image") || cancer_choice.equals("img")){
+                System.out.print("Enter image path(relative or absolute): ");
+                String path = scanner.nextLine();
+                File file = new File(path);
+                if(!file.exists()){
+                    System.out.println("File doesn't exist!");
+                    continue;
+                }
+                if(uploadImage(file)){
+                    System.out.println("Upload successful");
+                }else{
+                    System.out.println("Upload failed");
+                }
+                continue;
+            }else if(cancer_choice.equals("text")){
+                cancer_choice = scanner.nextLine();
+                System.out.print("Enter your post: ");
+                String text_post = scanner.nextLine();
+                Request req = new Request(TagTypes.CLIENT, session, RequestType.POST, BodyType.PLAIN_TEXT, text_post);
+                sendRequest(req);
+            }
+        }
+        Request request = new Request(TagTypes.CLIENT,session, RequestType.POST, "", "");
+    }
+
+    private boolean uploadImage(File file){
+        if(!connect(server)) return false;
+        Request req = new Request(TagTypes.CLIENT, session, RequestType.POST, BodyType.IMAGE, file.getName());
+        try{
+            send(req);
+
+            InputStream inputStream = new FileInputStream(file);
+            BufferedOutputStream outputStream = new BufferedOutputStream(socket.getOutputStream());
+
+            outputStream.write(inputStream.readAllBytes());
+            outputStream.write("\r\n".getBytes());
+            outputStream.flush();
+
+            inputStream.close();
+            disconnect(socket);
+        }catch (IOException  ignore){
+            ignore.printStackTrace();
+            return false;
+        }
+        return true;
     }
 
     //See all clients
@@ -171,10 +222,19 @@ public class Client implements  Runnable{
     //Unfollow a user
     private void unfollow() throws IOException, ClassNotFoundException{
         resetFeedIndex();
-        System.out.println("Enter client you wish to unfollow");
-        String client_id = scanner.nextLine();
-        Request request = new Request(TagTypes.CLIENT,session, RequestType.UNFOLLOW, BodyType.CLIENT_ID, client_id);
-        sendRequest(request);
+        while(true){
+            System.out.println("You are following: ");
+            follow_list();
+            System.out.println("Enter client you wish to unfollow or press e to exit");
+            String client_id = scanner.nextLine();
+            if(client_id.equals("e")) break;
+            Request request = new Request(TagTypes.CLIENT,session, RequestType.UNFOLLOW, BodyType.CLIENT_ID, client_id);
+            Response response = sendRequest(request);
+            if(response.getResponse().equals(ResponseType.BAD_REQUEST)){
+                System.out.println("You haven't logged in");
+                continue;
+            }
+        }
     }
 
     // Check requests from users who requested to follow you
@@ -237,6 +297,13 @@ public class Client implements  Runnable{
             String directory = parts[2].equals("null")? "" : parts[2];
             System.out.println(k+ " requested :"+follow+" "+directory);
         });
+    }
+
+    private void follow_list() throws IOException, ClassNotFoundException {
+        resetFeedIndex();
+        Request request = new Request(TagTypes.CLIENT,session, RequestType.FOLLOW_LIST, "", "");
+        Response response = sendRequest(request);
+        if(response == null) return;
     }
 
     int refreshFeed = -1;

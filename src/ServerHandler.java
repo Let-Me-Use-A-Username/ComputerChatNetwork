@@ -20,7 +20,8 @@ public class ServerHandler implements Runnable{
     private final ClientNode node;
     private final Object credLock = new Object();
     private final Object clientLock = new Object();
-    private final Object graph_lock = new Object();      
+    private final Object graph_lock = new Object();
+    private final Object block_lock = new Object();
     private final Server server;
 
     public ServerHandler(Socket socket, Server server){
@@ -41,14 +42,12 @@ public class ServerHandler implements Runnable{
                 case LOG_IN:
                     logIn(req);
                     break;
-                    //TODO: post(5)
                 case POST:
                     post(req);
                     break;
                 case FOLLOW:
                     follow(req);
                     break;
-                    //TODO: unfollow (3)
                 case UNFOLLOW:
                     unfollow(req);
                     break;
@@ -64,12 +63,14 @@ public class ServerHandler implements Runnable{
                 case GET_USER_FEED:
                     getUserFeed(req);
                     break;
-                    //TODO: check requests (4)
                 case CHECK_REQUESTS:
                     checkRequest(req);
                     break;
                 case ACCEPT_DENY:
                     accept_deny_block(req);
+                    break;
+                case FOLLOW_LIST:
+                    follow_list(req);
                     break;
                 default:
                     noQuery();
@@ -167,6 +168,7 @@ public class ServerHandler implements Runnable{
             bad_credentials();
             return;
         }
+        credentials.setClientID(credentials.getClientID().replace(" ", "_"));
         boolean exists = userExists(credentials.getClientID(), null);
         if(exists){
             out.writeObject(new Response(TagTypes.SERVER, ResponseType.BAD_REQUEST, BodyType.OUTPUT, userExists));
@@ -250,14 +252,37 @@ public class ServerHandler implements Runnable{
 
     Response bad_req = new Response(TagTypes.SERVER, ResponseType.BAD_REQUEST, BodyType.OUTPUT, "Bad Request: session");
 
-    //TODO: post(5)
-    private void post(Request request) throws IOException{
+    private void post(Request request) throws IOException, ClassNotFoundException {
         if(!authenticate(request.getCookie())){
             out.writeObject(bad_req);
             out.flush();
             return;
         }
-        System.out.println("aha");
+        if(request.getBodyType().equals(BodyType.IMAGE)){
+            String file_name = (String) request.getBody();
+            if(file_name.contains("\\")) return;
+            String[] parts = file_name.split("\\.");
+            file_name = parts[0] + "_" + System.currentTimeMillis()+"." + parts[1];
+            receive_image(request.getCookie().getClientID(), file_name);
+
+        }
+    }
+
+    private boolean receive_image(String client_id, String file_name) {
+        try {
+            InputStream inputStream = socket.getInputStream();
+            byte[] imageAr = inputStream.readAllBytes();
+            File file = new File("./database/Client/" + client_id + "/Profile/" + file_name);
+            createPath(file.toPath());
+            OutputStream os = new FileOutputStream(file);
+            os.write(imageAr);
+            os.flush();
+            os.close();
+        }catch (IOException e){
+            e.printStackTrace();
+            return false;
+        }
+        return true;
     }
 
     private void follow(Request request) throws IOException{
@@ -273,7 +298,11 @@ public class ServerHandler implements Runnable{
             out.flush();
             return;
         }
-        //TODO: Check if user is blocked
+        if(isBlocked(follower, toFollow)){
+            out.writeObject(new Response(TagTypes.SERVER, ResponseType.OK, BodyType.OUTPUT, toFollow+" has you blocked."));
+            out.flush();
+            return;
+        }
         if(writeRequest(follower, toFollow, RequestType.FOLLOW)){
             out.writeObject(new Response(TagTypes.SERVER, ResponseType.CREATED, BodyType.OUTPUT, "Request sent!"));
         }else{
@@ -282,14 +311,25 @@ public class ServerHandler implements Runnable{
         out.flush();
     }
 
-    //TODO: unfollow (3)
+
     private void unfollow(Request request) throws IOException{
         if(!authenticate(request.getCookie())){
             out.writeObject(bad_req);
             out.flush();
             return;
         }
-        System.out.println("aha");
+        String unfollower = request.getCookie().getClientID();
+        String client_id = (String) request.getBody();
+        if(!userExists(client_id, null)){
+            out.writeObject(new Response(TagTypes.SERVER, ResponseType.NOT_FOUND, BodyType.OUTPUT, "User doesn't exist"));
+            out.flush();
+            return;
+        }
+        new Thread(new GraphHandler(client_id, unfollower, "remove")).start();
+        out.writeObject(new Response(TagTypes.SERVER, ResponseType.OK, BodyType.OUTPUT,
+                "You successfully unfollowed "+client_id));
+        out.flush();
+        new Thread(new Notification(unfollower,client_id, "unfollowed you.")).start();
     }
 
     private void getAll(Request request) throws IOException{
@@ -331,7 +371,6 @@ public class ServerHandler implements Runnable{
         System.out.println("aha");
     }
 
-    //TODO: check requests (4)
     private void checkRequest(Request request) throws IOException {
         if(!authenticate(request.getCookie())){
             out.writeObject(bad_req);
@@ -347,6 +386,30 @@ public class ServerHandler implements Runnable{
         }
         out.writeObject(new Response(TagTypes.SERVER, ResponseType.OK, BodyType.MAP_STRING_STRING, client_requests));
         out.flush();
+    }
+
+    private boolean isBlocked(String follower,String toFollow){
+        boolean found = false;
+        try{
+            String path = "./database/Client/"+toFollow+"/blocked.txt";
+            File file = new File(path);
+            synchronized (block_lock){
+            if(!file.exists()) return false;
+                FileReader fr = new FileReader(file);
+                BufferedReader br = new BufferedReader(fr);
+                String readLine;
+                while((readLine = br.readLine()) != null){
+                    if(readLine.equals(follower)){
+                        found = true;
+                        break;
+                    }
+                }
+                // Close read stream
+                br.close();
+                fr.close();
+            }
+        }catch (IOException ignore){ }
+        return found;
     }
 
     //FORMAT: "NAME" follow:"(y|yes)", "(n|no)",null,(block|b) directory:"(y|yes)", "(n|no)", null, (block|b)
@@ -388,7 +451,7 @@ public class ServerHandler implements Runnable{
             case 2:
                 return "Blocked from " + request + client;
             case 10:
-                return "Accepted and followed back " + adj + client;
+                return "Accepted and followed back"+adj + client;
             default:
                 return "";
         }
@@ -468,6 +531,7 @@ public class ServerHandler implements Runnable{
                 if(req == RequestType.FOLLOW){
                     new Thread(new GraphHandler(client, requester, "add")).start();
                     if(choice == 10){
+                        removeFromFollowRequest(client, requester);
                         new Thread(new Notification(client, requester, "accepted your following and followed back")).start();
                         new Thread(new GraphHandler(requester, client, "add")).start();
                     }else{
@@ -500,6 +564,49 @@ public class ServerHandler implements Runnable{
             fw.close();
         }catch (IOException e){ return false;}
         return true;
+    }
+
+    private void removeFromFollowRequest(String client, String requester){
+        try{
+            String path = requestPath[0]+"/"+requester+"/"+requestPath[1];
+            File file = new File(path);
+            if(!file.exists()) return;
+            // Read requests
+            FileReader fr = new FileReader(file);
+            BufferedReader br = new BufferedReader(fr);
+            LinkedHashMap<String, String> request_names = new LinkedHashMap<>();
+            String readLine;
+            while((readLine = br.readLine()) != null) {
+                String client_id = readLine.split("\\s")[0];
+                request_names.put(client_id, readLine);
+            }
+            // Close read stream
+            br.close();
+            fr.close();
+            // Edit file or remove row if everything is null
+            boolean found = false;
+            if(request_names.get(client) !=null){
+                found = true;
+                String[] parts = request_names.get(client).split("\\s");
+                parts[1] = "null";
+                if(parts[1].equals(parts[2]) && parts[1].equals("null")){
+                    request_names.remove(client);
+                }
+            }
+            if(!found) return;
+            // Write the new map
+            FileWriter fw = new FileWriter(file);
+            BufferedWriter bw = new BufferedWriter(fw);
+            PrintWriter pw = new PrintWriter(bw);
+            request_names.forEach( (k, v)->{
+                pw.println(v);
+                pw.flush();
+            });
+            // Close write stream
+            pw.close();
+            bw.close();
+            fw.close();
+        }catch (IOException ignore){ }
     }
 
     private boolean block(String client,String requester,RequestType req){
@@ -542,6 +649,17 @@ public class ServerHandler implements Runnable{
         out.flush();
     }
 
+    private void follow_list(Request request) throws IOException{
+        if(!authenticate(request.getCookie())){
+            out.writeObject(bad_req);
+            out.flush();
+            return;
+        }
+        String client_id = request.getCookie().getClientID();
+        HashSet<String> follow_list = getFollowList(client_id);
+        out.writeObject(new Response(TagTypes.SERVER, ResponseType.OK, BodyType.STRING_SET, follow_list));
+        out.flush();
+    }
 
     private boolean authenticate(Session session){
         if(session == null) return false;
@@ -690,7 +808,7 @@ public class ServerHandler implements Runnable{
 
         public void run(){
             String path = requestPath[0]+requester+"/"+"notifications.txt";
-            String notification = client + message;
+            String notification = client +" "+ message;
             createPath(Paths.get(path));
             try{
                 File file = new File(path);
@@ -736,6 +854,30 @@ public class ServerHandler implements Runnable{
             fw.close();
         }catch (IOException e){ return false;}
         return true;
+    }
+
+
+    private HashSet<String> getFollowList(String client){
+        HashSet<String> follow_list = new HashSet<>();
+        try{
+            File file = new File("./database/SocialGraph.txt");
+            if(!file.exists()) return new HashSet<>();
+            synchronized (graph_lock){
+                FileReader fr = new FileReader(file);
+                BufferedReader br = new BufferedReader(fr);
+                String readLine;
+                while((readLine = br.readLine()) != null){
+                    if(readLine.startsWith(client)) continue;
+                    HashSet<String> rowData = new HashSet<>();
+                    rowData.addAll(Arrays.asList(readLine.split("\\s")));
+                    if(rowData.contains(client)) follow_list.add(readLine.split(" ")[0]);
+                }
+                //Close read streams
+                br.close();
+                fr.close();
+            }
+        }catch (IOException ignore){ }
+        return follow_list;
     }
 
     class GraphHandler implements Runnable{
@@ -800,7 +942,6 @@ public class ServerHandler implements Runnable{
                 }
             }catch (IOException ignored){ ignored.printStackTrace();}
         }
-
     }
 
 }
