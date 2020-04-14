@@ -149,8 +149,11 @@ public class Client implements  Runnable{
     }
 
     //Search Photo
-    private void searchPhoto() {
+    private void searchPhoto() throws IOException, ClassNotFoundException {
         resetFeedIndex();
+        System.out.println("Enter the image you wish to search (exact name): ");
+        String choice = scanner.nextLine();
+        sendRequest(new Request(TagTypes.CLIENT, session, RequestType.SEARCH, BodyType.IMAGE, choice));
     }
 
     //Post photo
@@ -158,9 +161,9 @@ public class Client implements  Runnable{
         resetFeedIndex();
         while (true){
             System.out.println("Post your image(img) or text or e to exit: ");
-            String cancer_choice = scanner.nextLine();
-            if(cancer_choice.equals("e")) break;
-            if(cancer_choice.equals("image") || cancer_choice.equals("img")){
+            String choice = scanner.nextLine();
+            if(choice.equals("e")) break;
+            if(choice.equals("image") || choice.equals("img")){
                 System.out.print("Enter image path(relative or absolute): ");
                 String path = scanner.nextLine();
                 File file = new File(path);
@@ -174,7 +177,7 @@ public class Client implements  Runnable{
                     System.out.println("Upload failed");
                 }
                 continue;
-            }else if(cancer_choice.equals("text")){
+            }else if(choice.equals("text")){
                 System.out.print("Enter your post: ");
                 String text_post = scanner.nextLine();
                 Request req = new Request(TagTypes.CLIENT, session, RequestType.POST, BodyType.PLAIN_TEXT, text_post);
@@ -373,6 +376,7 @@ public class Client implements  Runnable{
         if(response.getBodyType().equals(BodyType.OUTPUT)) output((String)response.getBody());
         if(response.getBodyType().equals(BodyType.STRING_SET)) outputSet((Set<String>) response.getBody());
         if(response.getBodyType().equals(BodyType.MAP_INTEGER_STRING)) outputOrderedMap((SortedMap<Integer, String>) response.getBody(), ((String)req.getBody()).split("_")[0]);
+        if(response.getBodyType().equals(BodyType.MAP_STRING_STRING)) outputMap((HashMap<String, String>) response.getBody());
         disconnect(socket);
         return response;
     }
@@ -400,8 +404,7 @@ public class Client implements  Runnable{
     }
 
     private void outputSet(Set<String> set){
-        Iterator it = set.iterator();
-        while (it.hasNext()) System.out.println("- "+it.next());
+        for (String s : set) System.out.println("- " + s);
     }
 
     private void outputOrderedMap(SortedMap<Integer, String> map, String Client){
@@ -410,6 +413,14 @@ public class Client implements  Runnable{
         }else{
             System.out.println("~ "+Client+" feed: ");
             map.forEach( (k, v)->System.out.println("- "+v));
+        }
+    }
+
+    private void outputMap(HashMap<String, String> map){
+        if(map.size() == 0) {
+            System.out.println("- No image found by that name.");
+        }else{
+            map.forEach( (k, v)-> System.out.println("- "+k+" has this image, with filename: "+v));
         }
     }
 

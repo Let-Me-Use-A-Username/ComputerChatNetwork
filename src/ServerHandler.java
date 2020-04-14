@@ -393,7 +393,18 @@ public class ServerHandler implements Runnable{
             out.flush();
             return;
         }
-        System.out.println("aha");
+        String client_id = request.getCookie().getClientID();
+        HashSet<String> follow_list = getFollowList(client_id);
+        HashMap<String, String> img = new HashMap<>();
+        follow_list.forEach((v)->{
+            img.put(v, getPhoto(v, (String) request.getBody()));
+        });
+        Set<String> keys = img.keySet();
+        keys.forEach((v)->{
+            if(img.get(v).isBlank()) img.remove(v);
+        });
+        out.writeObject(new Response(TagTypes.SERVER, ResponseType.OK, BodyType.MAP_STRING_STRING, img));
+        out.flush();
     }
 
     private void getFeed(Request request) throws IOException{
@@ -402,7 +413,7 @@ public class ServerHandler implements Runnable{
             out.flush();
             return;
         }
-        System.out.println("aha");
+        System.out.println("aha. Not implemented yet");
     }
 
     private void getUserFeed(Request request) throws IOException{
@@ -429,6 +440,20 @@ public class ServerHandler implements Runnable{
         SortedMap<Integer, String> map = getFeedFiles(client_id, index);
         out.writeObject(new Response(TagTypes.SERVER, ResponseType.OK, BodyType.MAP_INTEGER_STRING, map));
         out.flush();
+    }
+
+    private String getPhoto(String client, String search){
+        HashMap<String, String> map = new HashMap<>();
+        map.put(client, "");
+        File folder = new File("./database/Client/"+client+"/Profile");
+        for(File file:folder.listFiles()){
+            if(file.getName().contains(".txt")) continue;
+            if(file.getName().startsWith(search)){
+                map.put(client, file.getName());
+                break;
+            }
+        }
+        return map.get(client);
     }
 
     private SortedMap<Integer, String> getFeedFiles(String client_id, int index){
