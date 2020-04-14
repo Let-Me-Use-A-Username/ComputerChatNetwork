@@ -439,7 +439,7 @@ public class ServerHandler implements Runnable{
             int counter = 0;
             int startFrom = index*10;
             int skip = 0;
-            for(File file: folder.ligggistFiles()){
+            for(File file: folder.listFiles()){
                 if(skip++ < startFrom) continue;
                 if(counter == 11) break;
                 if(file.getName().contains(".txt")){
