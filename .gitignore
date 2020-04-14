@@ -4,3 +4,4 @@ out/*
 database/ClientCredentials/*
 database/Profile/*
 database/Client/*
+database/SocialGraph.txt

@@ -9,6 +9,8 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 
 public class ServerHandler implements Runnable{
@@ -71,6 +73,9 @@ public class ServerHandler implements Runnable{
                     break;
                 case FOLLOW_LIST:
                     follow_list(req);
+                    break;
+                case FOLLOWER_LIST:
+                    follower_list(req);
                     break;
                 default:
                     noQuery();
@@ -153,7 +158,6 @@ public class ServerHandler implements Runnable{
      * Register methods
      *
      */
-
     private static final String userExists = "Client id already exists.";
 
     private void register(Request request) throws IOException {
@@ -258,14 +262,38 @@ public class ServerHandler implements Runnable{
             out.flush();
             return;
         }
+        Response success = new Response(TagTypes.SERVER, ResponseType.CREATED, BodyType.OUTPUT, "Your post was uploaded.");
+        Response fail = new Response(TagTypes.SERVER, ResponseType.INTERNAL_ERROR, BodyType.OUTPUT, "Your post was not uploaded.");
         if(request.getBodyType().equals(BodyType.IMAGE)){
-            String file_name = (String) request.getBody();
-            if(file_name.contains("\\")) return;
-            String[] parts = file_name.split("\\.");
-            file_name = parts[0] + "_" + System.currentTimeMillis()+"." + parts[1];
-            receive_image(request.getCookie().getClientID(), file_name);
-
+            final String filename = (String) request.getBody();
+            if(filename.contains("\\")) return;
+            String[] parts = filename.split("\\.");
+            String file_name = parts[0] + "_" + System.currentTimeMillis()+"." + parts[1];
+            if(receive_image(request.getCookie().getClientID(), file_name)){
+                HashSet<String> followers = getFollowers(request.getCookie().getClientID());
+                followers.forEach((v)->{
+                    new Thread(new Notification(request.getCookie().getClientID(), v, " uploaded a new image. " +
+                            "{ "+filename+" }"));
+                });
+                out.writeObject(success);
+            }else{
+                out.writeObject(fail);
+            }
         }
+        if(request.getBodyType().equals(BodyType.PLAIN_TEXT)){
+            String post_filename = LocalDateTime.now().format(DateTimeFormatter.ofPattern("dd_M_yyyy_hh_mm_ss")).toString();
+            if(writeNewPost(request.getCookie().getClientID(), (String) request.getBody(), post_filename)){
+                HashSet<String> followers = getFollowers(request.getCookie().getClientID());
+                followers.forEach((v)->{
+                    new Thread(new Notification(request.getCookie().getClientID(), v, " uploaded a new post. " +
+                            "{ "+post_filename+" }")).start();
+                });
+                out.writeObject(success);
+            }else{
+                out.writeObject(fail);
+            }
+        }
+        out.flush();
     }
 
     private boolean receive_image(String client_id, String file_name) {
@@ -282,6 +310,21 @@ public class ServerHandler implements Runnable{
             e.printStackTrace();
             return false;
         }
+        return true;
+    }
+
+    private boolean writeNewPost(String client_id, String post, String filename){
+        File file = new File("./database/Client/"+client_id+"/Profile/"+filename+".txt");
+        createPath(file.toPath());
+        try{
+            FileWriter fw = new FileWriter(file);
+            BufferedWriter bw = new BufferedWriter(fw);
+            bw.write(post);
+            bw.flush();
+            //Close streams
+            bw.close();
+            fw.close();
+        }catch (IOException ignore){ ignore.printStackTrace(); return false; }
         return true;
     }
 
@@ -368,7 +411,63 @@ public class ServerHandler implements Runnable{
             out.flush();
             return;
         }
-        System.out.println("aha");
+        String[] parts = ((String)request.getBody()).split("_");
+        String client_id = parts[0];
+        int index = Integer.parseInt(parts[1]);
+        if(!userExists(client_id, null)){
+            out.writeObject(new Response(TagTypes.SERVER, ResponseType.NOT_FOUND, BodyType.OUTPUT, user_404));
+            out.flush();
+            return;
+        }
+        HashSet<String> followers = getFollowers(client_id);
+        if(!followers.contains(request.getCookie().getClientID())){
+            out.writeObject(new Response(TagTypes.SERVER, ResponseType.UNAUTHORIZED, BodyType.OUTPUT, "You are not a follower of "+request.getBody()));
+            out.flush();
+            return;
+        }
+
+        SortedMap<Integer, String> map = getFeedFiles(client_id, index);
+        out.writeObject(new Response(TagTypes.SERVER, ResponseType.OK, BodyType.MAP_INTEGER_STRING, map));
+        out.flush();
+    }
+
+    private SortedMap<Integer, String> getFeedFiles(String client_id, int index){
+        SortedMap<Integer, String> map = new TreeMap<>();
+        File folder = new File("./database/Client/"+client_id+"/Profile");
+        if(!folder.exists()) return map;
+        try{
+            int counter = 0;
+            int startFrom = index*10;
+            int skip = 0;
+            for(File file: folder.ligggistFiles()){
+                if(skip++ < startFrom) continue;
+                if(counter == 11) break;
+                if(file.getName().contains(".txt")){
+                    FileReader fr = new FileReader(file);
+                    BufferedReader br = new BufferedReader(fr);
+                    String post = "";String readLine;
+                    while((readLine = br.readLine()) != null)
+                        post += readLine;
+                    map.put(++counter, post);
+                    br.close();
+                    fr.close();
+                }else{
+                    map.put(++counter, "New file: "+file.getName());
+                }
+            }
+        }catch (IOException e){ return map;}
+        return map;
+    }
+
+    private void follower_list(Request request) throws IOException{
+        if(!authenticate(request.getCookie())){
+            out.writeObject(bad_req);
+            out.flush();
+            return;
+        }
+        HashSet<String> follower_list = getFollowers(request.getCookie().getClientID());
+        out.writeObject(new Response(TagTypes.SERVER, ResponseType.OK, BodyType.STRING_SET, follower_list));
+        out.flush();
     }
 
     private void checkRequest(Request request) throws IOException {
@@ -807,7 +906,7 @@ public class ServerHandler implements Runnable{
         }
 
         public void run(){
-            String path = requestPath[0]+requester+"/"+"notifications.txt";
+            String path = "./database/Client/"+requester+"/notifications.txt";
             String notification = client +" "+ message;
             createPath(Paths.get(path));
             try{
@@ -856,12 +955,36 @@ public class ServerHandler implements Runnable{
         return true;
     }
 
+    private HashSet<String> getFollowers(String client){
+        HashSet<String> follower_list = new HashSet<>();
+        try{
+            File file = new File("./database/SocialGraph.txt");
+            if(!file.exists()) return follower_list;
+            FileReader fr;
+            BufferedReader br;
+            synchronized (graph_lock){
+                fr = new FileReader(file);
+                br = new BufferedReader(fr);
+                String readLine;
+                while((readLine = br.readLine()) != null){
+                    if(!readLine.startsWith(client)) continue;
+                    follower_list.addAll(Arrays.asList(readLine.split("\\s")));
+                    follower_list.remove(client);
+                    break;
+                }
+            }
+            //Close streams
+            br.close();
+            fr.close();
+        }catch (IOException ignore) { }
+        return follower_list;
+    }
 
     private HashSet<String> getFollowList(String client){
         HashSet<String> follow_list = new HashSet<>();
         try{
             File file = new File("./database/SocialGraph.txt");
-            if(!file.exists()) return new HashSet<>();
+            if(!file.exists()) return follow_list;
             synchronized (graph_lock){
                 FileReader fr = new FileReader(file);
                 BufferedReader br = new BufferedReader(fr);

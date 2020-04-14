@@ -34,6 +34,7 @@ public class Client implements  Runnable{
         System.out.println("9. Refresh");
         System.out.println("10. Check client activity");
         System.out.println("11. List of people I follow");
+        System.out.println("12. List of people who follow you");
         System.out.println("0. Exit");
     }
 
@@ -100,6 +101,9 @@ public class Client implements  Runnable{
                         break;
                     case 11:
                         follow_list();
+                        break;
+                    case 12:
+                        follower_list();
                         break;
                     default:
                         break;
@@ -171,14 +175,12 @@ public class Client implements  Runnable{
                 }
                 continue;
             }else if(cancer_choice.equals("text")){
-                cancer_choice = scanner.nextLine();
                 System.out.print("Enter your post: ");
                 String text_post = scanner.nextLine();
                 Request req = new Request(TagTypes.CLIENT, session, RequestType.POST, BodyType.PLAIN_TEXT, text_post);
                 sendRequest(req);
             }
         }
-        Request request = new Request(TagTypes.CLIENT,session, RequestType.POST, "", "");
     }
 
     private boolean uploadImage(File file){
@@ -195,8 +197,10 @@ public class Client implements  Runnable{
             outputStream.flush();
 
             inputStream.close();
+            Response res = (Response) in.readObject();
+            output((String) res.getBody());
             disconnect(socket);
-        }catch (IOException  ignore){
+        }catch (IOException | ClassNotFoundException  ignore){
             ignore.printStackTrace();
             return false;
         }
@@ -302,8 +306,13 @@ public class Client implements  Runnable{
     private void follow_list() throws IOException, ClassNotFoundException {
         resetFeedIndex();
         Request request = new Request(TagTypes.CLIENT,session, RequestType.FOLLOW_LIST, "", "");
-        Response response = sendRequest(request);
-        if(response == null) return;
+        sendRequest(request);
+    }
+
+    private void follower_list() throws IOException, ClassNotFoundException {
+        resetFeedIndex();
+        Request request = new Request(TagTypes.CLIENT,session, RequestType.FOLLOWER_LIST, "", "");
+        sendRequest(request);
     }
 
     int refreshFeed = -1;
@@ -363,6 +372,7 @@ public class Client implements  Runnable{
         }
         if(response.getBodyType().equals(BodyType.OUTPUT)) output((String)response.getBody());
         if(response.getBodyType().equals(BodyType.STRING_SET)) outputSet((Set<String>) response.getBody());
+        if(response.getBodyType().equals(BodyType.MAP_INTEGER_STRING)) outputOrderedMap((SortedMap<Integer, String>) response.getBody(), ((String)req.getBody()).split("_")[0]);
         disconnect(socket);
         return response;
     }
@@ -392,6 +402,15 @@ public class Client implements  Runnable{
     private void outputSet(Set<String> set){
         Iterator it = set.iterator();
         while (it.hasNext()) System.out.println("- "+it.next());
+    }
+
+    private void outputOrderedMap(SortedMap<Integer, String> map, String Client){
+        if(map.size() == 0) {
+            System.out.println(" ~ "+Client+ " doesn't have any more feed");
+        }else{
+            System.out.println("~ "+Client+" feed: ");
+            map.forEach( (k, v)->System.out.println("- "+v));
+        }
     }
 
     private static final String cnf = "./serverConfig.txt";

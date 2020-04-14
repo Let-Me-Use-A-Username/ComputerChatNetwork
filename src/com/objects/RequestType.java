@@ -15,5 +15,6 @@ public enum RequestType {
     POST,
     SEARCH,
     ACCEPT_DENY,
-    FOLLOW_LIST
+    FOLLOW_LIST,
+    FOLLOWER_LIST
 }
